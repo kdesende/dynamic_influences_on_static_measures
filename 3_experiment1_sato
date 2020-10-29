@@ -239,13 +239,11 @@ for(i in 1:N){
       plot(results$member$bestmemit[,1],ylab='drift',ylim=c(0,2),frame=F,type='l',main=paste('sub',i,'condition',condLab[c]))
       plot(results$member$bestmemit[,2],ylab='bound',ylim=c(.5,4),frame=F,type='l')
       plot(results$member$bestmemit[,3],ylab='ter',ylim=c(0,1),frame=F,type='l')
-      plot(results$member$bestmemit[,9],ylab='post-drift',ylim=c(0,2),frame=F,type='l')
-      plot(results$member$bestmemit[,10],ylab='add_mean',ylim=c(0,2),frame=F,type='l')
-      plot(results$member$bestmemit[,11],ylab='add_sd',ylim=c(0,.2),frame=F,type='l')
+      plot(results$member$bestmemit[,9],ylab='vratio',ylim=c(0,2),frame=F,type='l')
     }else{ #if not, fit the model
       optimal_params <- DEoptim(chi_square_optim, # function to optimize
-                                lower = c(0, .5, 0, .5, 2500, 1, .001, conf_rt_sato[i,c],   0, 0,  0,  0,  0,   0), # v,a,ter,z,ntrials,sigma,dt,t2time,vratio,add_mean,add_sd,peak_at_100,peak_at_50,peak_at_0
-                                upper = c(3,  4, 1, .5, 2500, 1, .001, conf_rt_sato[i,c], 2.5, 3, .1,  0, .15,  0), # v,a,ter,z,ntrials,sigma,dt,t2time,vratio
+                                lower = c(0, .5, 0, .5, 5000, 1, .001, conf_rt_sato[i,c],   0, 0,  0,  0,  0,   0), # v,a,ter,z,ntrials,sigma,dt,t2time,vratio,add_mean,add_sd,peak_at_100,peak_at_50,peak_at_0
+                                upper = c(3,  4, 1, .5, 5000, 1, .001, conf_rt_sato[i,c], 2.5, 3, .1,  0, .15,  0), # v,a,ter,z,ntrials,sigma,dt,t2time,vratio
                                 observations = tempDat,control=c(itermax=500)) # observed data is a parameter for the ks function we pass
       results <- summary(optimal_params)
       #save individual results
