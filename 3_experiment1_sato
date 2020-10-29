@@ -306,7 +306,7 @@ for(i in 1:N){
     tempDat <- subset(tempAll,condition==condLab[c]);tempDat$conf <- tempDat$cj
     temp <- chi_square_optim(c(drift_sato[i,c],bound_sato[i,c],ter_sato[i,c],.5,nsim,1,.001,conf_rt_sato[i,c],vratio_sato[i,c],add_mean_sato[i,c],add_sd_sato[i,c]),tempDat,0) 
     if(!exists('Simuls')){ Simuls <- cbind(temp,rep(c,nsim),rep(i,nsim))
-    }else{ Simuls <- fastmerge(Simuls,cbind(temp,rep(c,nsim),rep(i,nsim)))
+    }else{ Simuls <- rbind(Simuls,cbind(temp,rep(c,nsim),rep(i,nsim)))
     }
   }
 }
