@@ -167,22 +167,8 @@ chi_square_optim <- function(params, observations, returnFit){
   }
 }
 
-
-data_files <- list.files(path=c("SATO experiment/Data"),pattern = "*", recursive = FALSE)
-for(i in 1:length(data_files)){
-  if(i == 1){ Data <- read.csv(paste0("SATO experiment/Data/",data_files[i]))
-  }else{
-    temp <- read.csv(paste0("SATO experiment/Data/",data_files[i]))
-    Data <- fastmerge(temp,Data)
-  }
-}
-#Rename some stuff to more useful variables
-Data$sub <- Data$sona_ID
-Data$coh <- Data$coherence
-Data$cor <- ifelse(Data$correct=='true',1,0)
-Data$rt <- Data$rt/1000
-Data$cj <- Data$resp_confidence
-table(Data$sub,Data$condition)
+#load the data
+Data <- read.table('data_exp1.csv',sep=',',header=T)
 Training <- subset(Data, c(condition!="accuracy" & condition!="speed"))
 Data <- subset(Data,c(condition=="accuracy" | condition=="speed"))
 Data$response <- ifelse(Data$key_press==69,1,0)
