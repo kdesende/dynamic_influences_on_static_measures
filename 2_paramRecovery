@@ -1,0 +1,259 @@
+#Parameter recovery study of the evidence accumulation model with additional post-decision processing
+rm(list=ls())
+
+#For parallel computing, reset the number below to decide which participants you want to run
+parlel <- 1
+if(parlel==1) toRun <- 1:9
+if(parlel==2) toRun <- 10:18
+if(parlel==3) toRun <- 19:27
+if(parlel==4) toRun <- 28:36
+N <- length(toRun)
+
+library(Rcpp) # to source, compile and run C++ functions
+library(DEoptim) # optimization algorithm
+library(MALDIquant) #fn match_closest
+sourceCpp("DDM_with_confidence_slow.cpp") # this will give R access to the DDM_with_confidence_slow function 
+
+#Load the heatmap
+pcor <- as.matrix(read.table('pcor_5secs.txt',header=T)) #sigma=.1
+pcorVector <- as.vector(pcor)
+evUp <- seq(0,1,by=.01);
+
+#Create a function that compares observed data to simulate data using quantile optimisation 
+chi_square_optim <- function(params, observations, returnFit){
+  
+  #First, generate predictions:
+  names(params) <- c('v','a','ter','z','ntrials','sigma','dt','t2time','vratio','add_mean','add_sd')
+  predictions <- data.frame(DDM_with_confidence_slow(v=params['v'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=params['ntrials'],s=params['sigma'],dt=params['dt'],t2time=params['t2time'],postdriftmod=params['vratio']))
+  names(predictions) <- c('rt','resp','cor','raw_evidence2','rt2','cj')
+  predictions$evidence2 <- predictions$raw_evidence2
+  
+  #1. Convert cj into p(correct), so first flip
+  #1.1 starting point is a*z, so if you reach the upper bound evidence2 should be evidence2-z*a
+  predictions$evidence2[predictions$resp==1] <- predictions$evidence2[predictions$resp==1] - params['z']*params['a']
+  #if you reach the lower bound evidence2 should be evidence2+z*a 
+  predictions$evidence2[predictions$resp==-1] <- (-predictions$evidence2[predictions$resp==-1]) + params['z']*params['a']
+  
+  #match to the heatmap
+  predictions$evidence2 <- predictions$evidence2*.1 #the heatmap is created using sigma=.1
+  predictions$closest_evdnc2 <- match.closest(abs(predictions$evidence2),evUp) 
+  predictions$temprt2 <- predictions$rt2;
+  predictions$temprt2[predictions$temprt2>5] <- 5 #heatmap doesn't go higher
+  predictions$temprt2 <- predictions$temprt2*(dim(pcor)[1]/5) #scale with the heatmap, between 0 and 2000
+  
+  #pcorVector is aggregatedd per evidence row, so first accumulate up until evidence-1, and then add RT
+  #sigma is scaled until it's .1, so use pcorVevector
+  predictions$conft2 <- pcorVector[(predictions$closest_evdnc2-1)*dim(pcor)[1]+round(predictions$temprt2)]
+  
+  #correct trials where evidence2 < 0 should take the flip into account (conf = conf - 2*(conf-.5))
+  predictions$conft2[predictions$resp==1&predictions$evidence2<0] <- predictions$conft2[predictions$resp==1&predictions$evidence2<0] - 2*(predictions$conft2[predictions$resp==1&predictions$evidence2<0]-.5) 
+  #error trials where evidence2 has < 0 should take the flip into account (note that this is ALSo <0 because i've already flipped evidence beforehand)
+  predictions$conft2[predictions$resp==-1&predictions$evidence2<0] <- predictions$conft2[predictions$resp==-1&predictions$evidence2<0] - 2*(predictions$conft2[predictions$resp==-1&predictions$evidence2<0]-.5)
+  
+  #Use heatmap confidence instead of raw evidence
+  predictions$cj <- predictions$conft2
+  
+  #2. Linear scaling of confidence 
+  predictions$cj <- (predictions$cj + params['add_mean'])/params['add_sd']
+  predictions$cj[predictions$cj<0] <- 0
+  predictions$cj[predictions$cj>100] <- 100
+  
+  # again, separate the predections according to the response
+  c_predicted <- predictions[predictions$cor == 1,]
+  e_predicted <- predictions[predictions$cor == 0,]
+  
+  # to make the next step easier, lets sort the predictions for correct and errors
+  c_predicted_rt <- sort(c_predicted$rt)
+  e_predicted_rt <- sort(e_predicted$rt)
+  
+  #if we're only simulating data, return the predictions
+  if(returnFit==0){ 
+    return(predictions[,c('rt','cor','cj')])
+    
+    #If we are fitting the model, now compare these predictions to the observations 
+  }else{ 
+    
+    # First, separate the data in correct and error trials
+    c_observed <- observations[observations$cor == 1,]
+    e_observed <- observations[observations$cor == 0,]
+    
+    # Now, get the quantile RTs on the "observed data" for correct and error distributions separately (for quantiles .1, .3, .5, .7, .9)
+    c_quantiles <- quantile(c_observed$rt, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    e_quantiles <- quantile(e_observed$rt, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    
+    # to combine correct and incorrect we scale the expected interquantile probability by the proportion of correct and incorect respectively
+    prop_obs_c <- dim(c_observed)[1] / dim(observations)[1]
+    prop_obs_e <- dim(e_observed)[1] / dim(observations)[1]
+    
+    c_obs_proportion = prop_obs_c * c(.1, .2, .2, .2, .2, .1)
+    e_obs_proportion = prop_obs_e * c(.1, .2, .2, .2, .2, .1)
+    obs_props <- c(c_obs_proportion,e_obs_proportion)
+    
+    # now, get the proportion of responses that fall between the observed quantiles when applied to the predicted data (scale by N?)
+    c_pred_proportion <- c(
+      sum(c_predicted_rt <= c_quantiles[1]),
+      sum(c_predicted_rt <= c_quantiles[2]) - sum(c_predicted_rt <= c_quantiles[1]),
+      sum(c_predicted_rt <= c_quantiles[3]) - sum(c_predicted_rt <= c_quantiles[2]),
+      sum(c_predicted_rt <= c_quantiles[4]) - sum(c_predicted_rt <= c_quantiles[3]),
+      sum(c_predicted_rt <= c_quantiles[5]) - sum(c_predicted_rt <= c_quantiles[4]),
+      sum(c_predicted_rt > c_quantiles[5])
+    ) / dim(predictions)[1]
+    
+    e_pred_proportion <- c(
+      sum(e_predicted_rt <= e_quantiles[1]),
+      sum(e_predicted_rt <= e_quantiles[2]) - sum(e_predicted_rt <= e_quantiles[1]),
+      sum(e_predicted_rt <= e_quantiles[3]) - sum(e_predicted_rt <= e_quantiles[2]),
+      sum(e_predicted_rt <= e_quantiles[4]) - sum(e_predicted_rt <= e_quantiles[3]),
+      sum(e_predicted_rt <= e_quantiles[5]) - sum(e_predicted_rt <= e_quantiles[4]),
+      sum(e_predicted_rt > e_quantiles[5])
+    ) / dim(predictions)[1]
+    pred_props <- c(c_pred_proportion,e_pred_proportion)
+    
+    # avoid zeros in the the data (because of division by predictions for chi square statistic) -> set to small number
+    pred_props[pred_props==0] <- .0000001
+    
+    # Now, do the same for confidence
+    # Get the quantile Cjs on the "observed data" for correct and error distributions separately (for quantiles .1, .3, .5, .7, .9)
+    c_quantiles_cj <- quantile(c_observed$cj, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    e_quantiles_cj <- quantile(e_observed$cj, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    
+    # to make the next step easier, lets sort the predictions for correct and errors
+    c_predicted_cj <- sort(c_predicted$cj)
+    e_predicted_cj <- sort(e_predicted$cj)
+    
+    # now, get the proportion of responses that fall between the observed quantiles when applied to the predicted data (scale by N?)
+    c_pred_proportion_cj <- c(
+      sum(c_predicted_cj <= c_quantiles_cj[1]),
+      sum(c_predicted_cj <= c_quantiles_cj[2]) - sum(c_predicted_cj <= c_quantiles_cj[1]),
+      sum(c_predicted_cj <= c_quantiles_cj[3]) - sum(c_predicted_cj <= c_quantiles_cj[2]),
+      sum(c_predicted_cj <= c_quantiles_cj[4]) - sum(c_predicted_cj <= c_quantiles_cj[3]),
+      sum(c_predicted_cj <= c_quantiles_cj[5]) - sum(c_predicted_cj <= c_quantiles_cj[4]),
+      sum(c_predicted_cj > c_quantiles_cj[5])
+    ) / dim(predictions)[1]
+    
+    e_pred_proportion_cj <- c(
+      sum(e_predicted_cj <= e_quantiles_cj[1]),
+      sum(e_predicted_cj <= e_quantiles_cj[2]) - sum(e_predicted_cj <= e_quantiles_cj[1]),
+      sum(e_predicted_cj <= e_quantiles_cj[3]) - sum(e_predicted_cj <= e_quantiles_cj[2]),
+      sum(e_predicted_cj <= e_quantiles_cj[4]) - sum(e_predicted_cj <= e_quantiles_cj[3]),
+      sum(e_predicted_cj <= e_quantiles_cj[5]) - sum(e_predicted_cj <= e_quantiles_cj[4]),
+      sum(e_predicted_cj > e_quantiles_cj[5])
+    ) / dim(predictions)[1]
+    pred_props_cj <- c(c_pred_proportion_cj,e_pred_proportion_cj)
+    
+    # avoid zeros in the the data (because of division by predictions for chi square statistic) -> set to small number
+    pred_props_cj[pred_props_cj==0] <- .0000001
+    
+    # Combine the quantiles for rts and cj
+    obs_props <- c(obs_props,obs_props)
+    pred_props <- c(pred_props,pred_props_cj)
+    # calculate chi square
+    chiSquare = sum( ( (obs_props - pred_props) ^ 2) / pred_props )
+    
+    #Return chiSquare
+    return(chiSquare)
+  }
+}
+
+
+######################################################################################
+#1. Simulations & parameter recovery
+
+samples=120/2 #This value should be 120, 200 or 25000 (it's multiplied by 2 below)
+for(sub in toRun){
+  #Use the estimated fits from the speed condition of the sato experiment to get realistic parameters
+  load(paste0('SATO experiment/fits/6 params/results_sub_',sub,'_speed.Rdata'))
+  drift <- results$optim$bestmem[1];drift <- c(drift,drift)
+  bound <- results$optim$bestmem[2]
+  ter <- results$optim$bestmem[3]
+  vratio <-   results$optim$bestmem[9]
+  add_mean <- results$optim$bestmem[10]
+  add_sd <- results$optim$bestmem[11]
+  t2 <- 1;z <- .5;sigma<-1
+  
+  #generate data, using returnFit=0
+  out1 <- chi_square_optim(c(drift[1],bound,ter,.5,samples,1,.001,t2,vratio,add_mean,add_sd),NA,returnFit=0)
+  out2 <- chi_square_optim(c(drift[2],bound,ter,.5,samples,1,.001,t2,vratio,add_mean,add_sd),NA,returnFit=0)
+  out <- rbind(out1,out2)
+  out$drift <- drift[1];out$bound <- bound;out$vratio <- vratio;out$rtconf <- t2;out$ter <- ter
+  out$add_mean <- add_mean;out$add_sd <- add_sd;  
+  out$cj_quant <- as.numeric(cut(out$cj,5));out$sub <- sub
+  
+  #save to df
+  if(sub==toRun[1]){
+    Data <- out
+  }else{
+    Data <- fastmerge(Data,out)
+  }
+}
+
+#save this "true values" version to compare with recovery
+save(Data, file=paste0('paramRecov/generative_',samples,'_samples_',parlel,'.Rdata'))
+
+#RECOVERY
+vratio_recover <- rep(NA,N);bound_recover <- rep(NA,N);drift_recover <- rep(NA,N);ter_recover <- rep(NA,N);add_mean_recover <- rep(NA,N);add_sd_recover <- rep(NA,N);peak_at_50_recover <- rep(NA,N)
+for(i in toRun){
+  print(paste('Running participant',i))
+  tempDat <- subset(Data,sub==i)
+  
+  print(paste('generative =',round(tempDat$drift[1],2),round(tempDat$bound[1],2),round(tempDat$ter[1],2),round(tempDat$vratio[1],2)))
+  optimal_params <- DEoptim(chi_square_optim, # function to optimize
+                            lower = c(0, .5,  0, .5, 5000, 1, .001, 1, 0, 0,    0,  0), # v,a,ter,z,ntrials,sigma,dt,t2time,vratio,add_mean,add_sd,peak_at_50
+                            upper = c(3,  3,  1, .5, 5000, 1, .001, 1, 2, 2.5, .05,.2), #
+                            observations = tempDat, # observed data is a parameter for the ks function we pass
+                            returnFit=1)
+  )
+
+results <- summary(optimal_params)
+save(results, file=paste0('paramRecov/param_recovery_',samples,'_samples_sub_',i,'_parallel',parlel,'.Rdata'))
+}
+
+#check the results
+#Load the "true" state from Experiment 1, and see whether we were able to recover these. 
+N <- 36
+vratio_recover <- rep(NA,N);bound_recover <- rep(NA,N);z_recover <- rep(NA,N);sigma_recover <- rep(NA,N);drift_recover <- rep(NA,N);ter_recover <- rep(NA,N)
+add_mean_recover <- rep(NA,N);add_sd_recover <- rep(NA,N);add_peak_50_recover <- rep(NA,N)
+samples <- 60 #This value can take "12500", "100", "60" indicating how many trials are used (note; this is multiplied by 2 below)
+for(parlel in 1:4){
+  rm(Data)
+  load(paste0('paramRecov/generative_',samples,'_samples_',parlel,'.Rdata'))
+  if(parlel == 1){ 
+    AllData <- Data
+  }else{
+    AllData <- rbind(AllData,Data)
+  }
+  
+  #Get the recovery
+  for(i in unique(Data$sub)){
+    load(paste0('paramRecov/param_recovery_',samples,'_samples_sub_',i,'_parallel',parlel,'.Rdata'))
+    
+    drift_recover[i] <-   results$optim$bestmem[1]
+    bound_recover[i] <-   results$optim$bestmem[2]
+    ter_recover[i] <-   results$optim$bestmem[3]
+    vratio_recover[i] <-   results$optim$bestmem[9]
+    add_mean_recover[i] <-   results$optim$bestmem[10]
+    add_sd_recover[i] <-   results$optim$bestmem[11]
+    add_peak_50_recover[i] <- results$optim$bestmem[12]
+  }
+}
+Data <- AllData;subs <- unique(Data$sub);N <-length(subs);print(N)
+
+#get the "true" parameters
+drift <- with(Data,aggregate(drift,by=list(sub),mean))$x
+ter <- with(Data,aggregate(ter,by=list(sub),mean))$x
+bound <- with(Data,aggregate(bound,by=list(sub),mean))$x
+confidence_rt <- with(Data,aggregate(rtconf,by=list(sub),mean))$x
+vratio <- with(Data,aggregate(vratio,by=list(sub),mean))$x
+add_mean <- with(Data,aggregate(add_mean,by=list(sub),mean))$x
+add_sd <- with(Data,aggregate(add_sd,by=list(sub),mean))$x
+add_peak_50 <- with(Data,aggregate(add_peak_50,by=list(sub),mean))$x
+
+# Show recovery of the parameters
+par(mfrow=c(2,3))
+plot(bound_recover~bound,frame=F,pch=19,main=paste('Recovery with ', samples*2,'datapoints'));cor.test(bound_recover,bound);abline(lm(bound_recover~bound),lty=2);mtext(paste('r = ',round(cor(bound_recover,bound),3)))
+plot(drift_recover~drift,frame=F,pch=19);cor.test(drift_recover,drift);abline(lm(drift_recover~drift),lty=2);mtext(paste('r = ',round(cor(drift_recover,drift),3)))
+plot(ter_recover~ter,frame=F,pch=19);cor.test(ter_recover,ter);abline(lm(ter_recover~ter),lty=2);mtext(paste('r = ',round(cor(ter_recover,ter),3)))
+
+plot(vratio_recover~vratio,frame=F,pch=19);cor.test(vratio_recover,vratio);abline(lm(vratio_recover~vratio),lty=2);mtext(paste('r = ',round(cor(vratio_recover,vratio),3)))
+plot(add_mean_recover~add_mean,frame=F,pch=19);cor.test(add_mean_recover,add_mean);abline(lm(add_mean_recover~add_mean),lty=2);mtext(paste('r = ',round(cor(add_mean_recover,add_mean),3)))
+plot(add_sd_recover~add_sd,frame=F,pch=19);cor.test(add_sd_recover,add_sd);abline(lm(add_sd_recover~add_sd),lty=2);mtext(paste('r = ',round(cor(add_sd_recover,add_sd),3)))
