@@ -1,7 +1,10 @@
 # dynamic_influences_on_static_measures
-This repo contains the accompanying R  code for the paper "Dynamic influences on static measures of metacognition" authored by Kobe Desender, Luc Vermeylen, and Tom Verguts.
+This repo contains code for the paper "Dynamic influences on static measures of metacognition" authored by Kobe Desender, Luc Vermeylen, and Tom Verguts.
 
-#Code, 5 R files that implement the following: 
+#Experiment code
+...
+
+#Analysis, 5 R files that implement the following: 
 1. DDM Simulations demontrating how meta-d'/d' (=mratio) depends on decision boundary
 2. Parameter recovery study on the evidence accumulation model with post-decision accumulation
 3. Fitting an evidence accumulation model with post-decision accumulation to Experiment 1 (explicit SATO instructions) to estimate m-ratio and v-ratio
