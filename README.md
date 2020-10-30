@@ -2,7 +2,7 @@
 This repo contains code for the paper "Dynamic influences on static measures of metacognition" authored by Kobe Desender, Luc Vermeylen, and Tom Verguts.
 
 #Experiment code:
-...
+RDK_SATS contains the code that was used to run Experiment 1. Due to covid-19 this study was run online (using jspych). 
 
 #Analysis, 5 R files that implement the following: 
 1. DDM Simulations demontrating how meta-d'/d' (=mratio) depends on decision boundary
