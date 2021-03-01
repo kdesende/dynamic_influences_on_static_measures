@@ -29,6 +29,13 @@ for(sub in 1:N){
   bound = runif(1,.5,3)  #variation in boundary
   vratio <- runif(1,0,1.5) #variation in vratio (i.e., individual differences in metacognition)
   
+  #account for t2~bound relations by selecting confRT~rt
+  temp <- rdiffusion(samples,bound,drift,ter)
+  t2 <- -1
+  while(t2 < .5){
+    t2 <- rnorm(1,mean(temp[temp[,2]=="upper",1]),1)
+  }
+  
   out1 <- data.frame(DDM_with_confidence_slow(v=drift[1],a=bound,ter=ter,z=z,ntrials=samples,s=sigma,dt=.001,t2time=t2,postdriftmod=vratio))
   out1$drift <- drift[1]
   out2 <- data.frame(DDM_with_confidence_slow(v=drift[2],a=bound,ter=ter,z=z,ntrials=samples,s=sigma,dt=.001,t2time=t2,postdriftmod=vratio))
