@@ -1,0 +1,218 @@
+#This version implements Pleskac & Busemeyer (2010), i.e. confidence is purely post-decisional
+rm(list=ls())
+
+library(Rcpp) # to source, compile and run C++ functions
+library(DEoptim) # optimization algorithm
+sourceCpp("DDM_with_confidence_slow.cpp") # this will give R access to the DDM_with_confidence_slow function 
+source('fastmerge.R')
+
+#Create a function that compares observed data to simulate data 
+chi_square_optim <- function(params, observations, returnFit){
+  
+  #First, generate predictions:
+  # With different parameters, as if we don't know the real ones)
+  names(params) <- c('v','a','ter','z','ntrials','sigma','dt','t2time','post_drift_mod','add_mean','add_sd')
+  predictions <- data.frame(DDM_with_confidence_slow(v=params['v'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=params['ntrials'],s=params['sigma'],dt=params['dt'],t2time=params['t2time'],postdriftmod=params['post_drift_mod']))
+  names(predictions) <- c('rt','resp','cor','raw_evidence2','rt2','cj')
+  predictions$evidence2 <- predictions$raw_evidence2
+
+  #2. Linear scaling of confidence 
+  predictions$cj <- (predictions$cj + params['add_mean']) / params['add_sd']
+  predictions$cj[predictions$cj<0] <- 0
+  predictions$cj[predictions$cj>100] <- 100
+  
+  #Add a peak at 50, the proportion of which is controlled by the empirically observed peak
+  P <- length(which(observations$cj==50))/length(observations$cj)
+  
+  sorted_cj <- sort(predictions$cj);idx_50 <- which.min(abs(sorted_cj - 50))[1]
+  lower <- c(-1,-1);one_value_up <- 0
+  while(length(lower)!=1){
+    lower <- sorted_cj[idx_50-round((P/2)*dim(predictions)[1]) + one_value_up]
+    upper <- sorted_cj[idx_50+round((P/2)*dim(predictions)[1]) + one_value_up]
+    one_value_up <- one_value_up+1 #in case the data is not symmetrical around 50,this value controls for that by shifting everything up
+  }
+  predictions$cj[predictions$cj>=lower & predictions$cj<upper] <- 50
+  
+  # again, separate the predections according to the response
+  c_predicted <- predictions[predictions$cor == 1,]
+  e_predicted <- predictions[predictions$cor == 0,]
+  
+  # to make the next step easier, lets sort the predictions for correct and errors
+  c_predicted_rt <- sort(c_predicted$rt)
+  e_predicted_rt <- sort(e_predicted$rt)
+  
+  #if we're only simulating data, return the predictions
+  if(returnFit==0){ 
+    return(predictions[,c('rt','cor','cj')])
+    
+    #If we are fitting the model, now compare these predictions to the observations 
+  }else{ 
+    
+    # First, separate the data in correct and error trials
+    c_observed <- observations[observations$cor == 1,]
+    e_observed <- observations[observations$cor == 0,]
+    
+    # Now, get the quantile RTs on the "observed data" for correct and error distributions separately (for quantiles .1, .3, .5, .7, .9)
+    c_quantiles <- quantile(c_observed$rt, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    e_quantiles <- quantile(e_observed$rt, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    
+    # to combine correct and incorrect we scale the expected interquantile probability by the proportion of correct and incorect respectively
+    prop_obs_c <- dim(c_observed)[1] / dim(observations)[1]
+    prop_obs_e <- dim(e_observed)[1] / dim(observations)[1]
+    
+    c_obs_proportion = prop_obs_c * c(.1, .2, .2, .2, .2, .1)
+    e_obs_proportion = prop_obs_e * c(.1, .2, .2, .2, .2, .1)
+    obs_props <- c(c_obs_proportion,e_obs_proportion)
+    
+    # now, get the proportion of responses that fall between the observed quantiles when applied to the predicted data (scale by N?)
+    c_pred_proportion <- c(
+      sum(c_predicted_rt <= c_quantiles[1]),
+      sum(c_predicted_rt <= c_quantiles[2]) - sum(c_predicted_rt <= c_quantiles[1]),
+      sum(c_predicted_rt <= c_quantiles[3]) - sum(c_predicted_rt <= c_quantiles[2]),
+      sum(c_predicted_rt <= c_quantiles[4]) - sum(c_predicted_rt <= c_quantiles[3]),
+      sum(c_predicted_rt <= c_quantiles[5]) - sum(c_predicted_rt <= c_quantiles[4]),
+      sum(c_predicted_rt > c_quantiles[5])
+    ) / dim(predictions)[1]
+    
+    e_pred_proportion <- c(
+      sum(e_predicted_rt <= e_quantiles[1]),
+      sum(e_predicted_rt <= e_quantiles[2]) - sum(e_predicted_rt <= e_quantiles[1]),
+      sum(e_predicted_rt <= e_quantiles[3]) - sum(e_predicted_rt <= e_quantiles[2]),
+      sum(e_predicted_rt <= e_quantiles[4]) - sum(e_predicted_rt <= e_quantiles[3]),
+      sum(e_predicted_rt <= e_quantiles[5]) - sum(e_predicted_rt <= e_quantiles[4]),
+      sum(e_predicted_rt > e_quantiles[5])
+    ) / dim(predictions)[1]
+    pred_props <- c(c_pred_proportion,e_pred_proportion)
+    
+    # avoid zeros in the the data (because of division by predictions for chi square statistic) -> set to small number
+    pred_props[pred_props==0] <- .0000001
+    
+    # Now, do the same for confidence
+    # Get the quantile Cjs on the "observed data" for correct and error distributions separately (for quantiles .1, .3, .5, .7, .9)
+    c_quantiles_cj <- quantile(c_observed$cj, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    e_quantiles_cj <- quantile(e_observed$cj, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    
+    # to make the next step easier, lets sort the predictions for correct and errors
+    c_predicted_cj <- sort(c_predicted$cj)
+    e_predicted_cj <- sort(e_predicted$cj)
+    
+    # now, get the proportion of responses that fall between the observed quantiles when applied to the predicted data (scale by N?)
+    c_pred_proportion_cj <- c(
+      sum(c_predicted_cj <= c_quantiles_cj[1]),
+      sum(c_predicted_cj <= c_quantiles_cj[2]) - sum(c_predicted_cj <= c_quantiles_cj[1]),
+      sum(c_predicted_cj <= c_quantiles_cj[3]) - sum(c_predicted_cj <= c_quantiles_cj[2]),
+      sum(c_predicted_cj <= c_quantiles_cj[4]) - sum(c_predicted_cj <= c_quantiles_cj[3]),
+      sum(c_predicted_cj <= c_quantiles_cj[5]) - sum(c_predicted_cj <= c_quantiles_cj[4]),
+      sum(c_predicted_cj > c_quantiles_cj[5])
+    ) / dim(predictions)[1]
+    
+    e_pred_proportion_cj <- c(
+      sum(e_predicted_cj <= e_quantiles_cj[1]),
+      sum(e_predicted_cj <= e_quantiles_cj[2]) - sum(e_predicted_cj <= e_quantiles_cj[1]),
+      sum(e_predicted_cj <= e_quantiles_cj[3]) - sum(e_predicted_cj <= e_quantiles_cj[2]),
+      sum(e_predicted_cj <= e_quantiles_cj[4]) - sum(e_predicted_cj <= e_quantiles_cj[3]),
+      sum(e_predicted_cj <= e_quantiles_cj[5]) - sum(e_predicted_cj <= e_quantiles_cj[4]),
+      sum(e_predicted_cj > e_quantiles_cj[5])
+    ) / dim(predictions)[1]
+    pred_props_cj <- c(c_pred_proportion_cj,e_pred_proportion_cj)
+    
+    # avoid zeros in the the data (because of division by predictions for chi square statistic) -> set to small number
+    pred_props_cj[pred_props_cj==0] <- .0000001
+    
+    # Combine the quantiles for rts and cj
+    obs_props <- c(obs_props,obs_props)
+    pred_props <- c(pred_props,pred_props_cj)
+    # calculate chi square
+    chiSquare = sum( ( (obs_props - pred_props) ^ 2) / pred_props )
+    
+    #Return chiSquare
+    return(chiSquare)
+  }
+}
+
+
+###########################################
+### ANALYZE THE ONLINE SATO EXPERIMENT ####
+###########################################
+data_files <- list.files(path=c("SATO experiment/Data"),pattern = "*", recursive = FALSE)
+for(i in 1:length(data_files)){
+  if(i == 1){ Data <- read.csv(paste0("SATO experiment/Data/",data_files[i]))
+  }else{
+    temp <- read.csv(paste0("SATO experiment/Data/",data_files[i]))
+    Data <- fastmerge(temp,Data)
+  }
+}
+#Rename some stuff
+Data$sub <- Data$sona_ID
+Data$coh <- Data$coherence
+Data$cor <- ifelse(Data$correct=='true',1,0)
+Data$rt <- Data$rt/1000
+Data$cj <- Data$resp_confidence
+table(Data$sub,Data$condition)
+Training <- subset(Data, c(condition!="accuracy" & condition!="speed"))
+Data <- subset(Data,c(condition=="accuracy" | condition=="speed"))
+Data$response <- ifelse(Data$key_press==69,1,0)
+
+#exclude negative RTs and RTs < .1
+Data <- subset(Data,rt > .1)
+
+#Exclude subjects with more then 10 training blocks
+N_training_block <- with(Training,aggregate(block,by=list(sub=sub),max))
+#plot(N_training_block$x)
+Data <- subset(Data, sub != N_training_block$sub[N_training_block$x>10][1])
+Data <- subset(Data, sub != N_training_block$sub[N_training_block$x>10][2])
+
+#
+subs <- unique(Data$sub);N<-length(subs)
+
+meanerr <- with(Data,aggregate(cor,by=list(sub=sub),mean))
+plot(meanerr$x)
+
+par(mfrow=c(2,2))
+at_chance <- matrix(NA,nrow=N,ncol=2)
+for(i in 1:N){
+  #training
+  # tempDat <- subset(Training,i)
+  # acc_block <- with(tempDat,aggregate(cor,by=list(block=block),mean))  
+  # plot(acc_block,ylab="Acc",main="training",frame=F,ylim=c(.4,1));abline(h=.5,lty=2,col="grey")
+  #main exp
+  tempDat <- subset(Data,sub==subs[i])
+  acc_block <- with(tempDat,aggregate(cor,by=list(block=block),mean))  
+  at_chance[i,] <- c(subs[i], t.test(acc_block$x,mu=.5)$p.value)
+  bias_block <- with(tempDat,aggregate(response,by=list(block=block),mean))  
+  # plot(acc_block,ylab="Acc (.) and bias (x)",frame=F,ylim=c(0,1));abline(h=.5,lty=2,col="grey")
+  # points(bias_block,pch=4)  
+  # plot(tempDat$rt,frame=F,col=c(NA,"black","grey")[tempDat$condition],main=paste('subject',i),ylab="RT",ylim=c(0,5))
+  # plot(tempDat$cj,frame=F,col=c(NA,"black","grey")[tempDat$condition],ylim=c(0,100),ylab="conf")
+  # plot(tempDat$rt_confidence,frame=F,col=c(NA,"black","grey")[tempDat$condition],ylab="RT_conf")
+}
+Data <- subset(Data, sub!= at_chance[at_chance[,2]>.05,1][1]) #
+Data <- subset(Data, sub!= at_chance[at_chance[,2]>.05,1][2]) #
+
+#
+subs <- unique(Data$sub);N<-length(subs)
+
+dprime_sato <- matrix(NA,N,2);mratio_sato <- matrix(NA,N,2);bound_sato <- matrix(NA,N,2);drift_sato <- matrix(NA,N,2);ter_sato <- matrix(NA,N,2);post_drift_sato <- matrix(NA,N,2);conf_rt_sato <- matrix(NA,N,2);mean_acc_sato <- matrix(NA,N,2);add_mean_sato <- matrix(NA,N,2);add_sd_sato <- matrix(NA,N,2);IES_sato <- matrix(NA,N,2);IES_bound_sato <- matrix(NA,N,2);add_peak_100_sato<-matrix(NA,N,2);add_peak_50_sato<-matrix(NA,N,2);add_peak_0_sato<-matrix(NA,N,2)
+for(i in 1:36){
+  print(paste('Running participant',i,'from',N))
+  condLab <- unique(Data$condition)
+  tempAll <- subset(Data,sub==subs[i])
+  for(c in 1:2){
+    tempDat <- subset(tempAll,condition==condLab[c])
+    conf_rt_sato[i,c] <- median(tempDat$rt_confidence/1000)
+    tempDat$stim <- ifelse(tempDat$cor==tempDat$response,1,0);
+    tempDat <- tempDat[,c('rt','cor','response','cj','stim')]
+    mean_acc_sato[i,c] <- mean(tempDat$cor);IES_bound_sato[i,c] <- median(tempDat$rt[tempDat$cor==1])*mean(tempDat$cor);IES_sato[i,c] <- median(tempDat$rt[tempDat$cor==1])/mean(tempDat$cor)
+    tempDat$conf <- tempDat$cj
+    #Load existing individual results if already exist
+    optimal_params <- DEoptim(chi_square_optim, # function to optimize
+                              lower = c(0, .5, 0, .5, 5000, 1, .001, conf_rt_sato[i,c],   0,   0,  0), # v,a,ter,z,ntrials,sigma,dt,t2time,post_drift_mod,add_mean,add_sd
+                              upper = c(3,  4, 1, .5, 5000, 1, .001, conf_rt_sato[i,c], 2.5, 2.5, .05), #
+                              observations = tempDat,
+                              returnFit=1,control=c(itermax=500)) # observed data is a parameter for the ks function we pass
+    results <- summary(optimal_params)
+    #save individual results
+    save(results, file=paste0('SATO experiment/results_sub_',i,'_',condLab[c],'_PB.Rdata'))
+  }
+}
+
