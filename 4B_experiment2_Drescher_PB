@@ -1,0 +1,160 @@
+#This version implements Pleskac & Busemeyer (2010), i.e. confidence is purely post-decisional
+rm(list=ls())
+
+library(Rcpp) # to source, compile and run C++ functions
+library(DEoptim) # optimization algorithm
+sourceCpp("DDM_with_confidence_slow.cpp") # this will give R access to the DDM_with_confidence_slow function 
+source('fastmerge.R')
+
+#Create a function that compares observed data to simulate data using quantile optimisation + cj_Acc 
+chi_square_optim_lenny <- function(params, observations, returnFit){
+  
+  #First, generate predictions:
+  # With different parameters, as if we don't know the real ones)
+  names(params) <- c('v','a','ter','z','ntrials','sigma','dt','t2time','post_drift_mod','add_mean','add_sd')
+  predictions <- data.frame(DDM_with_confidence_slow(v=params['v'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=params['ntrials'],s=params['sigma'],dt=params['dt'],t2time=params['t2time'],postdriftmod=params['post_drift_mod']))
+  names(predictions) <- c('rt','resp','cor','raw_evidence2','rt2','cj')
+  predictions$evidence2 <- predictions$raw_evidence2
+
+  #2. Linear scaling of confidence 
+  predictions$cj <- (predictions$cj + params['add_mean'])/params['add_sd'] 
+  predictions$cj[predictions$cj<1] <- 1
+  predictions$cj[predictions$cj>6] <- 6
+  
+  #Add a peak at 3.5, the proportion of which is controlled by the empirically observed peak
+  P <- length(which(observations$cj==3.5))/length(observations$cj)
+  
+  sorted_cj <- sort(predictions$cj);idx_35 <- which.min(abs(sorted_cj - 3.5))[1]
+  lower <- c(-1,-1);one_value_up <- 0
+  while(length(lower)!=1){
+    lower <- sorted_cj[idx_35-round((P/2)*dim(predictions)[1]) + one_value_up]
+    upper <- sorted_cj[idx_35+round((P/2)*dim(predictions)[1]) + one_value_up]
+    one_value_up <- one_value_up+1 #in case the data is not symmetrical around 3.5,this value controls for that by shifting everything up
+  }
+  predictions$cj[predictions$cj>=lower & predictions$cj<upper] <- 3.5
+
+  # again, separate the predections according to the response
+  c_predicted <- predictions[predictions$cor == 1,]
+  e_predicted <- predictions[predictions$cor == 0,]
+  
+  # to make the next step easier, lets sort the predictions for correct and errors
+  c_predicted_rt <- sort(c_predicted$rt)
+  e_predicted_rt <- sort(e_predicted$rt)
+  
+  #if we're only simulating data, return the predictions
+  if(returnFit==0){ 
+    return(predictions[,c('rt','cor','cj')])
+    
+    #If we are fitting the model, now compare these predictions to the observations 
+  }else{ 
+    
+    # First, separate the data in correct and error trials
+    c_observed <- observations[observations$cor == 1,]
+    e_observed <- observations[observations$cor == 0,]
+    
+    # Now, get the quantile RTs on the "observed data" for correct and error distributions separately (for quantiles .1, .3, .5, .7, .9)
+    c_quantiles <- quantile(c_observed$rt, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    e_quantiles <- quantile(e_observed$rt, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    
+    # to combine correct and incorrect we scale the expected interquantile probability by the proportion of correct and incorect respectively
+    prop_obs_c <- dim(c_observed)[1] / dim(observations)[1]
+    prop_obs_e <- dim(e_observed)[1] / dim(observations)[1]
+    
+    c_obs_proportion = prop_obs_c * c(.1, .2, .2, .2, .2, .1)
+    e_obs_proportion = prop_obs_e * c(.1, .2, .2, .2, .2, .1)
+    obs_props <- c(c_obs_proportion,e_obs_proportion)
+    
+    # now, get the proportion of responses that fall between the observed quantiles when applied to the predicted data (scale by N?)
+    c_pred_proportion <- c(
+      sum(c_predicted_rt <= c_quantiles[1]),
+      sum(c_predicted_rt <= c_quantiles[2]) - sum(c_predicted_rt <= c_quantiles[1]),
+      sum(c_predicted_rt <= c_quantiles[3]) - sum(c_predicted_rt <= c_quantiles[2]),
+      sum(c_predicted_rt <= c_quantiles[4]) - sum(c_predicted_rt <= c_quantiles[3]),
+      sum(c_predicted_rt <= c_quantiles[5]) - sum(c_predicted_rt <= c_quantiles[4]),
+      sum(c_predicted_rt > c_quantiles[5])
+    ) / dim(predictions)[1]
+    
+    e_pred_proportion <- c(
+      sum(e_predicted_rt <= e_quantiles[1]),
+      sum(e_predicted_rt <= e_quantiles[2]) - sum(e_predicted_rt <= e_quantiles[1]),
+      sum(e_predicted_rt <= e_quantiles[3]) - sum(e_predicted_rt <= e_quantiles[2]),
+      sum(e_predicted_rt <= e_quantiles[4]) - sum(e_predicted_rt <= e_quantiles[3]),
+      sum(e_predicted_rt <= e_quantiles[5]) - sum(e_predicted_rt <= e_quantiles[4]),
+      sum(e_predicted_rt > e_quantiles[5])
+    ) / dim(predictions)[1]
+    pred_props <- c(c_pred_proportion,e_pred_proportion)
+    
+    # avoid zeros in the the data (because of division by predictions for chi square statistic) -> set to small number
+    pred_props[pred_props==0] <- .0000001
+    
+    # Now, do the same for confidence
+    # Get the quantile Cjs on the "observed data" for correct and error distributions separately (for quantiles .1, .3, .5, .7, .9)
+    c_quantiles_cj <- quantile(c_observed$cj, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    e_quantiles_cj <- quantile(e_observed$cj, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+    
+    # to make the next step easier, lets sort the predictions for correct and errors
+    c_predicted_cj <- sort(c_predicted$cj)
+    e_predicted_cj <- sort(e_predicted$cj)
+    
+    # now, get the proportion of responses that fall between the observed quantiles when applied to the predicted data (scale by N?)
+    c_pred_proportion_cj <- c(
+      sum(c_predicted_cj <= c_quantiles_cj[1]),
+      sum(c_predicted_cj <= c_quantiles_cj[2]) - sum(c_predicted_cj <= c_quantiles_cj[1]),
+      sum(c_predicted_cj <= c_quantiles_cj[3]) - sum(c_predicted_cj <= c_quantiles_cj[2]),
+      sum(c_predicted_cj <= c_quantiles_cj[4]) - sum(c_predicted_cj <= c_quantiles_cj[3]),
+      sum(c_predicted_cj <= c_quantiles_cj[5]) - sum(c_predicted_cj <= c_quantiles_cj[4]),
+      sum(c_predicted_cj > c_quantiles_cj[5])
+    ) / dim(predictions)[1]
+    
+    e_pred_proportion_cj <- c(
+      sum(e_predicted_cj <= e_quantiles_cj[1]),
+      sum(e_predicted_cj <= e_quantiles_cj[2]) - sum(e_predicted_cj <= e_quantiles_cj[1]),
+      sum(e_predicted_cj <= e_quantiles_cj[3]) - sum(e_predicted_cj <= e_quantiles_cj[2]),
+      sum(e_predicted_cj <= e_quantiles_cj[4]) - sum(e_predicted_cj <= e_quantiles_cj[3]),
+      sum(e_predicted_cj <= e_quantiles_cj[5]) - sum(e_predicted_cj <= e_quantiles_cj[4]),
+      sum(e_predicted_cj > e_quantiles_cj[5])
+    ) / dim(predictions)[1]
+    pred_props_cj <- c(c_pred_proportion_cj,e_pred_proportion_cj)
+    
+    # avoid zeros in the the data (because of division by predictions for chi square statistic) -> set to small number
+    pred_props_cj[pred_props_cj==0] <- .0000001
+    
+    # Combine the quantiles for rts and cj
+    obs_props <- c(obs_props,obs_props)
+    pred_props <- c(pred_props,pred_props_cj)
+    # calculate chi square
+    chiSquare = sum( ( (obs_props - pred_props) ^ 2) / pred_props )
+    
+    #Return chiSquare
+    return(chiSquare)
+  }
+}
+
+#Load data
+Data <- read.table('Lenny_metacognition.txt',header=T)
+subs <- unique(Data$sub);N<-length(subs)
+
+#exclude RTs < .1 and RTs > 5
+Data <- subset(Data,rt > .1)
+Data <- subset(Data,rt < 5)
+
+#Fit the data
+dprime_lenny <- rep(NA,N);mratio_lenny <- rep(NA,N);bound_lenny <- rep(NA,N);drift_lenny <- rep(NA,N);ter_lenny <- rep(NA,N);post_drift_lenny <- rep(NA,N);conf_rt_lenny <- rep(NA,N);mean_acc_lenny <- rep(NA,N);add_mean_lenny <- rep(NA,N);add_sd_lenny <- rep(NA,N);add_peak_35_lenny <- rep(NA,N) 
+for(i in 1:63){
+  print(paste('Running participant',i,'from',N))
+  
+  tempDat <- subset(Data,sub==i);
+  conf_rt_lenny[i] <- median(tempDat$rtcj)
+  tempDat$stim <- ifelse(tempDat$cor==tempDat$response,1,0);tempDat <- tempDat[,c('rt','cor','response','cj','stim')]
+  mean_acc_lenny[i] <- mean(tempDat$cor);
+  tempDat$conf <- tempDat$cj
+  #fit the model
+  optimal_params <- DEoptim(chi_square_optim_lenny, # function to optimize
+                            lower = c(0, .5, 0,   .5, 5000, 1, .001, conf_rt_lenny[i], 0,   0, 0), # v,a,ter,z,ntrials,sigma,dt,t2time,post_drift_mod,add_mean,add_sd
+                            upper = c(3,  4, 1.5, .5, 5000, 1, .001, conf_rt_lenny[i], 1.5,20, 4), # 
+                            observations = tempDat,
+                            returnFit=1,control=c(itermax=500)) 
+  results <- summary(optimal_params)
+  #save individual results
+  save(results, file=paste0('Results Lenny/results_sub_',i,'_PB.Rdata'))
+}
