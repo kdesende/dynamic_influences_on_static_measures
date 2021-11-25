@@ -65,7 +65,7 @@ for(i in 1:N){
   temp$cresp <- sign(temp$drift)
   temp$cj <- as.numeric(cut(temp$cj,4))
   fit <- computeMetaDa(as.factor(temp$cj),as.factor(temp$cresp),as.factor(temp$cor))
-  d[i] <- fit$Da / (fit$SdRatio * sqrt(2/(1 + fit$SdRatio^2)));metad[i] <- fit$metaDa;mratio[i]<-metad[i]/d[i]
+  d[i] <- fit$Da;metad[i] <- fit$metaDa;mratio[i]<-metad[i]/d[i]
 }
 x <- data.frame(cbind(d,metad,mratio));names(x) <- c("d","meta-d","mratio")
 par(mfrow=c(1,1))
