@@ -251,7 +251,7 @@ for(i in 1:N){
     #fit meta-d
     fit <- computeMetaDa(ratings=as.factor(tempDat$cj),stimulus=as.factor(tempDat$stim),correct=as.factor(tempDat$cor))
     dprime_sato[i,c] <- fit$Da
-    mratio_sato[i,c] <- fit$metaDa/dprime_sato[i,c]
+    mratio_sato[i,c] <- fit$metaDa/fit$Da
   }
 }
 
@@ -271,6 +271,15 @@ for(i in 1:N) lines(1:2,post_drift_sato[i,1:2],type='b',lty=2,col='grey',pch=19)
 points(colMeans(post_drift_sato),type='b',lwd=5);error.bar(1:2,colMeans(post_drift_sato),colSds(as.matrix(post_drift_sato))/sqrt(N),length=0,lwd=3)
 dev.off()
 
+#t-tests
+t.test(drift_sato[,1]-drift_sato[,2])
+t.test(bound_sato[,1],bound_sato[,2],p=T)
+t.test(ter_sato[,1]-ter_sato[,2])
+t.test(post_drift_sato[,1]-post_drift_sato[,2])
+t.test(add_mean_sato[,1]-add_mean_sato[,2])
+t.test(add_sd_sato[,1]-add_sd_sato[,2])
+t.test(mratio_sato[,1]-mratio_sato[,2])
+
 #Generate model simulations
 rm(Simuls);nsim <- 25
 for(i in 1:N){
@@ -287,6 +296,33 @@ for(i in 1:N){
   }
 }
 Simuls <- data.frame(Simuls);names(Simuls) <- c('rt','cor','cj','condition','sub')
+
+#Average performance for behavior and model predictions
+ER <- with(Data,aggregate(cor,by=list(sub=sub,condition=condition),mean));ER <- cast(ER,sub~condition)
+DataCor <- subset(Data,cor==1);RT <- with(DataCor,aggregate(rt,by=list(sub=sub,condition=condition),median));RT <- cast(RT,sub~condition)
+CJ <- with(Data,aggregate(cj,by=list(sub=sub,condition=condition),mean));CJ <- cast(CJ,sub~condition)
+
+ER_sim <- with(Simuls,aggregate(cor,by=list(sub=sub,condition=condition),mean));ER_sim <- cast(ER_sim,sub~condition)
+SimulsCor <- subset(Simuls,cor==1);RT_sim <- with(SimulsCor,aggregate(rt,by=list(sub=sub,condition=condition),median));RT_sim <- cast(RT_sim,sub~condition)
+CJ_sim <- with(Simuls,aggregate(cj,by=list(sub=sub,condition=condition),mean));CJ_sim <- cast(CJ_sim,sub~condition)
+
+jpeg(file="exp_1S_sato_behavresults.jpg", res=600, width=400*3*(350/72), height=400*(350/72))
+par(mfrow=c(1,3))
+plot(colMeans(ER)*100,frame=F,xlim=c(.8,2.2),cex.lab=1.5,type='n',ylim=c(50,100),ylab="Accuracy (%)",xlab="Instruction condition",xaxt='n');axis(1,1:2,c("Accuracy","Speed"))
+for(i in 1:N) lines(1:2,ER[i,2:3]*100,type='b',lty=2,col="grey",pch=19)
+points(colMeans(ER)*100,type='b',lwd=5);error.bar(1:2,colMeans(ER)*100,colSds(as.matrix(ER))*100/sqrt(N),length=0,lwd=3)
+points(colMeans(ER_sim)*100,pch=4,col="green",cex=2,lwd=3)
+
+plot(colMeans(RT),frame=F,type='n',cex.lab=1.5,xlim=c(.8,2.2),ylim=range(RT),ylab="Reaction times (s)",xlab="Instruction condition",xaxt='n');axis(1,1:2,c("Accuracy","Speed"))
+for(i in 1:N) lines(1:2,RT[i,2:3],type='b',lty=2,col="grey",pch=19)
+points(colMeans(RT),type='b',lwd=5);error.bar(1:2,colMeans(RT),colSds(as.matrix(RT))/sqrt(N),length=0,lwd=3)
+points(colMeans(RT_sim),pch=4,col="green",cex=2,lwd=3)
+
+plot(colMeans(CJ),frame=F,type='n',cex.lab=1.5,xlim=c(.8,2.2),ylim=range(CJ),ylab="Confidence",xlab="Instruction condition",xaxt='n');axis(1,1:2,c("Accuracy","Speed"))
+for(i in 1:N) lines(1:2,CJ[i,2:3],type='b',lty=2,col="grey",pch=19)
+points(colMeans(CJ),type='b',lwd=5);error.bar(1:2,colMeans(CJ),colSds(as.matrix(CJ))/sqrt(N),length=0,lwd=3)
+points(colMeans(CJ_sim),pch=4,col="green",cex=2,lwd=3)
+dev.off()
 
 jpeg(file="exp_1S_sato_fit.jpg", res=600, width=600*2*(350/72), height=600*(350/72))
 par(mfrow=c(2,2),mar=c(5.1,5.1,4.1,2.1))
