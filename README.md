@@ -7,7 +7,8 @@ RDK_SATS contains the code that was used to run Experiment 1. Due to covid-19 th
 #Analysis, 5 R files that implement the following: 
 1. DDM Simulations demontrating how meta-d'/d' (=mratio) depends on decision boundary
 2. Parameter recovery study on the evidence accumulation model with post-decision accumulation
-3. Fitting an evidence accumulation model with post-decision accumulation to Experiment 1 (explicit SATO instructions) to estimate m-ratio and v-ratio
+3A. Fitting an evidence accumulation model with post-decision accumulation to Experiment 1 (explicit SATO instructions, with 6-choice confidence ratings) to estimate m-ratio and v-ratio ("data_exp1_categoricalconf.csv")
+3B. Replication of Experiment 1 with continuous confidence ratings ("data_exp1.csv")
 4. Fitting the same model to Experiment 2 (data of Drescher et al.)
 5. Fitting the same model to Experiment 3 (data of Prieto et al.)
 
