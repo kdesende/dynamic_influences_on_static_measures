@@ -224,7 +224,7 @@ for(i in 1:N){
                               returnFit=1,control=c(itermax=500)) # observed data is a parameter for the ks function we pass
     results <- summary(optimal_params)
     #save individual results
-    save(results, file=paste0('SATO experiment/results_sub_',i,'_',condLab[c],'.Rdata'))
+    save(results, file=paste0('SATO experiment 1S/results_sub_',i,'_',condLab[c],'.Rdata'))
     #add results 
     drift_sato[i,c] <- results$optim$bestmem[1]
     bound_sato[i,c] <- results$optim$bestmem[2]
