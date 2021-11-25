@@ -1,9 +1,10 @@
-#This version implements Pleskac & Busemeyer (2010), i.e. confidence is purely post-decisional
+#This code is used to analyze the data of Prieto et al.
 rm(list=ls())
 
 library(Rcpp) # to source, compile and run C++ functions
 library(DEoptim) # optimization algorithm
 sourceCpp("DDM_with_confidence_slow.cpp") # this will give R access to the DDM_with_confidence_slow function 
+sourceCpp("DDM_with_confidence_slow_fullconfRT.cpp") #new version implementing full confidence RT
 source('fastmerge.R')
 
 #Create a function that compares observed data to simulate data using quantile optimisation + cj_Acc 
@@ -12,7 +13,7 @@ chi_square_optim_prieto <- function(params, observations, returnFit){
   #First, generate predictions:
   # With different parameters, as if we don't know the real ones)
   names(params) <- c('v','a','ter','z','ntrials','sigma','dt','t2time','post_drift_mod','add_mean','add_sd')
-  predictions <- data.frame(DDM_with_confidence_slow(v=params['v'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=params['ntrials'],s=params['sigma'],dt=params['dt'],t2time=params['t2time'],postdriftmod=params['post_drift_mod']))
+  predictions <- data.frame(DDM_with_confidence_slow_fullconfRT(v=params['v'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=dim(observations)[1]*params['ntrials'],s=params['sigma'],dt=params['dt'],t2distribution=rep(observations$rt_confidence,times=params['ntrials']),postdriftmod=params['post_drift_mod']))
   names(predictions) <- c('rt','resp','cor','raw_evidence2','rt2','cj')
   predictions$evidence2 <- predictions$raw_evidence2
   
@@ -20,7 +21,7 @@ chi_square_optim_prieto <- function(params, observations, returnFit){
   predictions$cj <- (predictions$cj + params['add_mean'])/params['add_sd'] 
   predictions$cj[predictions$cj<1] <- 1
   predictions$cj[predictions$cj>6] <- 6
-
+  
   # again, separate the predections according to the response
   c_predicted <- predictions[predictions$cor == 1,]
   e_predicted <- predictions[predictions$cor == 0,]
@@ -129,23 +130,91 @@ Data <- subset(Data,rt > .1)
 Data <- subset(Data,rt < 5)
 
 #Fit the data
-dprime_prieto <- rep(NA,N);mratio_prieto <- rep(NA,N);bound_prieto <- rep(NA,N);drift_prieto <- rep(NA,N);ter_prieto <- rep(NA,N);post_drift_prieto <- rep(NA,N);conf_rt_prieto <- rep(NA,N);mean_acc_prieto <- rep(NA,N);add_mean_prieto <- rep(NA,N);add_sd_prieto <- rep(NA,N);add_peak_35_prieto <- rep(NA,N) 
-for(i in 1:204){
+dprime_prieto <- rep(NA,N);mratio_prieto <- rep(NA,N);bound_prieto <- rep(NA,N);drift_prieto <- rep(NA,N);ter_prieto <- rep(NA,N);post_drift_prieto <- rep(NA,N);conf_rt_prieto <- rep(NA,N);mean_acc_prieto <- rep(NA,N);add_mean_prieto <- rep(NA,N);add_sd_prieto <- rep(NA,N);
+for(i in 1:N){
   print(paste('Running participant',i,'from',N))
   
   tempDat <- subset(Data,sub==subs[i]);
-  conf_rt_prieto[i] <- median(tempDat$rtcj)
-  #tempDat$stim <- ifelse(tempDat$cor==tempDat$response,1,0);
-  tempDat <- tempDat[,c('rt','cor','Response','cj','stim')]
-  mean_acc_prieto[i] <- mean(tempDat$cor);
+  tempDat$rt_confidence <- tempDat$rtcj
+  tempDat <- tempDat[,c('rt','cor','Response','cj','stim','rt_confidence')]
   tempDat$conf <- tempDat$cj
   #fit the model
   optimal_params <- DEoptim(chi_square_optim_prieto, # function to optimize
-                            lower = c(0, .5, 0,   .5, 5000, 1, .001, conf_rt_prieto[i], 0,   0, 0), # v,a,ter,z,ntrials,sigma,dt,t2time,post_drift_mod,add_mean,add_sd
-                            upper = c(3,  4, 1.5, .5, 5000, 1, .001, conf_rt_prieto[i], 1.5,20, 4), # 
+                            lower = c(0, .5, 0,   .5, 25, 1, .001, -99, 0,   0, 0), # v,a,ter,z,ntrials,sigma,dt,t2time,post_drift_mod,add_mean,add_sd
+                            upper = c(3,  4, 1.5, .5, 25, 1, .001, -99, 2.5,30, 4), # 
                             observations = tempDat,
                             returnFit=1,control=c(itermax=500)) # observed data is a parameter for the ks function we pass
   results <- summary(optimal_params)
   #save individual results
   save(results, file=paste0('Results prieto/results_sub_',i,'_PB.Rdata'))
+  #Add results
+  drift_prieto[i] <- results$optim$bestmem[1]
+  bound_prieto[i] <- results$optim$bestmem[2]
+  ter_prieto[i] <- results$optim$bestmem[3]
+  post_drift_prieto[i] <-   results$optim$bestmem[9]
+  add_mean_prieto[i] <- results$optim$bestmem[10]
+  add_sd_prieto[i] <- results$optim$bestmem[11]
+  #divide cj into 4 bins for the meta-d, or less if not possible
+  bins <- quantile(tempDat$cj,probs=seq(0,1,length.out=5))
+  if(length(unique(bins))<5){
+    bins <- quantile(tempDat$cj,probs=seq(0,1,length.out=4))
+    if(length(unique(bins))<4){
+      bins <- quantile(tempDat$cj,probs=seq(0,1,length.out=3))
+    }
+  }
+  if(length(unique(bins))>2){
+    tempDat$cj <- as.numeric(cut(tempDat$cj,bins,include.lowest=T))
+  }else{ #else, uneven division
+    warning('uneven division for pp',i)
+    modeVal <- median(tempDat$cj)
+    if(modeVal > mean(tempDat$cj)){
+      tempDat$cj <- ifelse(tempDat$cj<modeVal,1,2)
+    }else{
+      tempDat$cj <- ifelse(tempDat$cj>modeVal,1,2)
+    }
+  }
+  #
+  fit <- computeMetaDa(as.factor(tempDat$cj),as.factor(tempDat$stim),as.factor(tempDat$cor))
+  dprime_prieto[i] <- fit$Da
+  mratio_prieto[i] <- fit$metaDa/fit$Da
 }
+
+jpeg(file="prieto_results.jpg", res=600, width=400*3*(350/72), height=400*(350/72))
+par(mfrow=c(1,3))
+plot(mratio_prieto~post_drift_prieto,frame=F,pch=21,cex=2,cex.lab=1.5,col="white",bg="black",ylab="M-ratio",xlab="v-ratio");cor.test(mratio_prieto,post_drift_prieto);abline(lm(mratio_prieto~post_drift_prieto),lty=2,lwd=2)
+plot(mratio_prieto~bound_prieto,frame=F,pch=21,cex=2,cex.lab=1.5,col="white",bg="black",ylab="M-ratio",xlab="Decision bound");cor.test(mratio_prieto,bound_prieto);abline(lm(mratio_prieto~bound_prieto),lty=2,lwd=2)
+plot(post_drift_prieto~bound_prieto,frame=F,pch=21,cex=2,cex.lab=1.5,col="white",bg="black",ylab="v-ratio",xlab="Decision bound");cor.test(post_drift_prieto,bound_prieto);abline(lm(post_drift_prieto~bound_prieto),lty=2,lwd=2)
+dev.off()  
+
+#Generate model simulations
+rm(Simuls);nsim <- 25
+for(i in 1:N){
+  print(paste('simulating',subs[i],'from',N))
+  tempDat <- subset(Prieto,sub==subs[i])
+  tempDat$rt_confidence <- tempDat$rtcj
+  temp <- chi_square_optim_prieto(c(drift_prieto[i],bound_prieto[i],ter_prieto[i],.5,nsim,1,.001,-999,post_drift_prieto[i],add_mean_prieto[i],add_sd_prieto[i]),tempDat,0) 
+  
+  if(!exists('Simuls')){ Simuls <- cbind(temp,rep(i,nsim))
+  }else{ Simuls <- fastmerge(Simuls,cbind(temp,rep(i,nsim)))
+  }
+}
+Simuls <- data.frame(Simuls);names(Simuls) <- c('rt','cor','cj','sub')
+
+#overlay RT and confidence distributions from data and simulations
+jpeg(file="prieto_fit.jpg", res=600, width=600*2*(350/72), height=600*(350/72))
+par(mfrow=c(1,2),mar=c(5.1,5.1,4.1,2.1))
+tempC <- hist(Prieto$rt[Prieto$cor==1],breaks=seq(0,5,.05),xlim=c(0,3),prob=F,col=rgb(0,1,0,.25),border="white",ylab="Frequency",xlab="Reaction times (s)",cex.lab=2, cex.main=1.5, cex.axis=1.5,main="")
+tempE <- hist(Prieto$rt[Prieto$cor==0],breaks=seq(0,5,.05),prob=F,add=T,col=rgb(1,0,0,.25),border='white')
+Cors <- hist(Simuls$rt[Simuls$cor==1],breaks=seq(0,20,.05),plot=F)
+Errs <- hist(abs(Simuls$rt[Simuls$cor==0]),breaks=seq(0,20,.05),plot=F)
+lines(Cors$counts/(sum(Cors$counts)/sum(tempC$counts))~Cors$mids,type='l',col='green',lwd=3)
+lines(Errs$counts/(sum(Errs$counts)/sum(tempE$counts))~Errs$mids,type='l',col='red',lwd=3)
+legend("topright",fill=c("white","white","green","red"),border=F,legend=c("Simulated corrects","Simulated errors","Empirical corrects","Empirical errors"),col=rep(c("Green","Red"),2),bty='n',lwd=c(1,1,-1,-1))
+#same for confidence
+tempC <- hist(Prieto$cj[Prieto$cor==1],breaks=seq(1,6,.2),xlim=c(1,6),prob=F,col=rgb(0,1,0,.25),border="white",ylab="Frequency",xlab="Confidence",cex.lab=2, cex.main=1.5, cex.axis=1.5,main="")
+tempE <- hist(Prieto$cj[Prieto$cor==0],breaks=seq(1,6,.2),prob=F,add=T,col=rgb(1,0,0,.25),border='white')
+Cors <- hist(Simuls$cj[Simuls$cor==1],breaks=seq(-3,15,.2),plot=F)
+Errs <- hist(abs(Simuls$cj[Simuls$cor==0]),breaks=seq(-3,15,.2),plot=F)
+lines(Cors$counts/(sum(Cors$counts)/sum(tempC$counts))~Cors$mids,type='l',col='green',lwd=3)
+lines(Errs$counts/(sum(Errs$counts)/sum(tempE$counts))~Errs$mids,type='l',col='red',lwd=3)
+dev.off()
