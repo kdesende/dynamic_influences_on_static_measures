@@ -9,13 +9,9 @@ error.bar <- function(x, y, upper, lower=upper, length=0.1,...){
 # to source, compile and run C++ functions
 library(Rcpp) 
 sourceCpp("DDM_with_confidence_slow.cpp") # this will give R access to the DDM_with_confidence_slow function 
+sourceCpp("DDM_with_confidence_slow_fullconfRT.cpp") # updated version using the full confidence RT
 #Load code to compute metad
 source('computeMetaDa.R')
-#Load the heatmap reprenseint p(correct|evt,t,x)
-pcor <- as.matrix(read.table('pcor_5secs.txt',header=T)) #sigma=.1
-pcorVector <- as.vector(pcor)
-evUp <- seq(0,1,by=.01);
-
 
 #1. Simulate data with random selection of parameters
 N<-100 #N participants
@@ -23,53 +19,35 @@ samples=500 #ntrials,multiplied by 2 below
 t2 <- 1 #post-decision time
 z <- .5 #starting point
 sigma = 1 #within-trial noise
+simulation_noise <- 1 #noise in dummy RTs
+
 for(sub in 1:N){
-  drift <- runif(1,0,2.5);drift <- c(drift,-drift) #to estimate bias, we need a positive and negative drift
+  drift <- runif(1,1,3);drift <- c(drift,-drift) #to estimate bias, we need a positive and negative drift
   ter <- runif(1,.2,.6) #variation in non decision time
-  bound = runif(1,.5,3)  #variation in boundary
-  vratio <- runif(1,0,1.5) #variation in vratio (i.e., individual differences in metacognition)
-  
-  #account for t2~bound relations by selecting confRT~rt
-  temp <- rdiffusion(samples,bound,drift,ter)
-  t2 <- -1
-  while(t2 < .5){
-    t2 <- rnorm(1,mean(temp[temp[,2]=="upper",1]),1)
-  }
-  
-  out1 <- data.frame(DDM_with_confidence_slow(v=drift[1],a=bound,ter=ter,z=z,ntrials=samples,s=sigma,dt=.001,t2time=t2,postdriftmod=vratio))
+  bound = runif(1,.5,4)  #variation in boundary
+  vratio <- runif(1,0,1.25) #variation in vratio (i.e., individual differences in metacognition)
+
+  #account for t2~bound relations by sampling confRT from actual RT distribution
+  dummy_bound <- -1; while(dummy_bound < .5) {dummy_bound <- rnorm(1,bound,simulation_noise)}
+  dummy_drift <- -1; while(dummy_drift < 0) {dummy_drift <-  rnorm(1,drift,simulation_noise)}
+  tempConfRT <- rdiffusion(samples,dummy_bound,rnorm(1,dummy_drift,simulation_noise),0)
+
+  #actual simulations
+  out1 <- data.frame(DDM_with_confidence_slow_fullconfRT(v=drift[1],a=bound,ter=ter,z=z,ntrials=samples,s=sigma,dt=.001,t2distribution=tempConfRT[,1],postdriftmod=vratio))
   out1$drift <- drift[1]
-  out2 <- data.frame(DDM_with_confidence_slow(v=drift[2],a=bound,ter=ter,z=z,ntrials=samples,s=sigma,dt=.001,t2time=t2,postdriftmod=vratio))
+  out2 <- data.frame(DDM_with_confidence_slow_fullconfRT(v=drift[2],a=bound,ter=ter,z=z,ntrials=samples,s=sigma,dt=.001,t2distribution=tempConfRT[,1],postdriftmod=vratio))
   out2$drift <- drift[2]
-  
-  out <- rbind(out1,out2);names(out) <- c('rt','resp','cor','evidence2','rt2','cj','drift')
-  
-  #Convert cj into p(correct), so first flip
-  out$evidence2[out$resp==1] <- out$evidence2[out$resp==1] - .5*bound #subtract the starting point
-  out$evidence2[out$resp==-1] <- (-out$evidence2[out$resp==-1]) + .5*bound
-  
-  #match to the heatmap
-  out$evidence2 <- out$evidence2*.1 #the heatmap is created using sigma=.1
-  out$closest_evdnc2 <- match.closest(abs(out$evidence2),evUp)
-  out$outrt2 <- out$rt2;
-  out$outrt2[out$outrt2>5] <- 5 #heatmap doesn't go higher
-  out$outrt2 <- out$outrt2*(dim(pcor)[1]/5) #scale with the heatmap, between 0 and 2000
-  out$conft2 <- pcorVector[(out$closest_evdnc2-1)*dim(pcor)[1]+round(out$outrt2)]
-  out$conft2[out$resp==1&out$evidence2<0] <- out$conft2[out$resp==1&out$evidence2<0] - 2*(out$conft2[out$resp==1&out$evidence2<0]-.5)
-  out$conft2[out$resp==-1&out$evidence2<0] <- out$conft2[out$resp==-1&out$evidence2<0] - 2*(out$conft2[out$resp==-1&out$evidence2<0]-.5)
-  
-  #Use heatmap confidence instead of raw evidence
-  out$cj <- out$conft2
-  
+  out <- fastmerge(out1,out2);names(out) <- c('rt','resp','cor','evidence2','rt2','cj','drift')
+
   out$bound <- bound;out$starting_point <- z;out$within_trial_noise <- sigma;out$vratio <- vratio;out$rtconf <- t2;out$ter <- ter
-  
-  out$cj_quant <- as.numeric(cut(out$cj,5))
+  out$cj_quant <- as.numeric(cut(out$cj,quantile(out$cj,probs=seq(0,1,length.out=6))))
   out$sub <- sub
-  
+
   #save to df
   if(sub==1){
     Data <- out
   }else{
-    Data <- rbind(Data,out)
+    Data <- fastmerge(Data,out)
   }
 }
 
