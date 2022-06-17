@@ -10,7 +10,9 @@ RDK_SATS contains the code that was used to run Experiment 1. Due to covid-19 th
 3A. Fitting an evidence accumulation model with post-decision accumulation to Experiment 1 (explicit SATO instructions, with 6-choice confidence ratings) to estimate m-ratio and v-ratio ("data_exp1_categoricalconf.csv")
 3B. Replication of Experiment 1 with continuous confidence ratings ("data_exp1.csv")
 4. Fitting the same model to Experiment 2A (data of Drescher et al.)
-5. Fitting the same model to Experiment 2C (data of Prieto et al.)
+5. Fitting the same model to Experiment 2B (replication of 2A with categorical confidence)
+6. Fitting the same model to Experiment 2C (data of Prieto et al.)
+7. Fitting the same model to Experiment 2D (lots of squircles data, with categorical confidence)
 
 #Data:
 The data of Experiment 1 can be found in the file "data_exp1_categoricalconf.csv"
