@@ -1,0 +1,226 @@
+#This code is used to analyze the data of Experiment 2D (a.k.a. lots of squircles)
+rm(list=ls())
+
+library(Rcpp) # to source, compile and run C++ functions
+library(DEoptim) # optimization algorithm
+sourceCpp("DDM_with_confidence_slow_fullconfRT.cpp") #new version implementing full confidence RT
+source('fastmerge.R')
+
+#Create a function that compares observed data to simulate data using quantile optimisation
+chi_square_optim_squircles <- function(params, observations, returnFit){
+  
+  #First, generate predictions:
+  # With different parameters, as if we don't know the real ones)
+  names(params) <- c('v1','v2','v3','v4','a','ter','z','ntrials','sigma','dt','t2time','post_drift_mod','add_mean','add_sd')
+  predictions1 <- data.frame(DDM_with_confidence_slow_fullconfRT(v=params['v1'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=dim(observations[observations$snr==1,])[1]*params['ntrials'],s=params['sigma'],dt=params['dt'],t2distribution=rep(observations$rtcj[observations$snr==1],times=params['ntrials']),postdriftmod=params['post_drift_mod']))
+  predictions1$v <- 1
+  predictions2 <- data.frame(DDM_with_confidence_slow_fullconfRT(v=params['v2'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=dim(observations[observations$snr==2,])[1]*params['ntrials'],s=params['sigma'],dt=params['dt'],t2distribution=rep(observations$rtcj[observations$snr==2],times=params['ntrials']),postdriftmod=params['post_drift_mod']))
+  predictions2$v <- 2
+  predictions3 <- data.frame(DDM_with_confidence_slow_fullconfRT(v=params['v3'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=dim(observations[observations$snr==3,])[1]*params['ntrials'],s=params['sigma'],dt=params['dt'],t2distribution=rep(observations$rtcj[observations$snr==3],times=params['ntrials']),postdriftmod=params['post_drift_mod']))
+  predictions3$v <- 3
+  predictions4 <- data.frame(DDM_with_confidence_slow_fullconfRT(v=params['v4'],a=params['a'],ter=params['ter'],z=params['z'],ntrials=dim(observations[observations$snr==4,])[1]*params['ntrials'],s=params['sigma'],dt=params['dt'],t2distribution=rep(observations$rtcj[observations$snr==4],times=params['ntrials']),postdriftmod=params['post_drift_mod']))
+  predictions4$v <- 4
+  predictions <- rbind(predictions1,predictions2,predictions3,predictions4)
+  names(predictions) <- c('rt','resp','cor','raw_evidence2','rt2','cj','v')
+
+  #2. Linear scaling of confidence 
+  predictions$cj <- (predictions$cj + params['add_mean']) / params['add_sd']
+  predictions$cj[predictions$cj<1] <- 1
+  predictions$cj[predictions$cj>6] <- 6
+  
+  #only round numbers
+  predictions$cj <- round(predictions$cj)
+  
+  #if we're only simulating data, return the predictions
+  if(returnFit==0){ 
+    return(predictions[,c('rt','cor','cj','v')])
+    
+    #If we are fitting the model, now compare these predictions to the observations 
+  }else{ 
+    
+    pred_props <- obs_props <- c()
+
+    #loop over the four drift rates
+    for(c in 1:4){
+      
+      # again, separate the predections according to the response
+      c_predicted <- predictions[predictions$cor == 1 & predictions$v==c,]
+      e_predicted <- predictions[predictions$cor == 0 & predictions$v==c,]
+      
+      # and do the same for the observations
+      c_observed <- observations[observations$cor == 1 & observations$snr==c,]
+      e_observed <- observations[observations$cor == 0 & observations$snr==c,]
+      
+      # to make the next step easier, lets sort the predictions for correct and errors
+      c_predicted_rt <- sort(c_predicted$rt)
+      e_predicted_rt <- sort(e_predicted$rt)
+  
+      # Now, get the quantile RTs on the "observed data" for correct and error distributions separately (for quantiles .1, .3, .5, .7, .9)
+      c_quantiles <- quantile(c_observed$rt, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+      e_quantiles <- quantile(e_observed$rt, probs = c(.1,.3,.5,.7,.9), names = FALSE)
+      
+      # to combine correct and incorrect we scale the expected interquantile probability by the proportion of correct and incorect respectively
+      prop_obs_c <- dim(c_observed)[1] / dim(observations[observations$snr==c,])[1]
+      prop_obs_e <- dim(e_observed)[1] / dim(observations[observations$snr==c,])[1]
+      
+      c_obs_proportion = prop_obs_c * c(.1, .2, .2, .2, .2, .1)
+      e_obs_proportion = prop_obs_e * c(.1, .2, .2, .2, .2, .1)
+      obs_props <- c(obs_props,c_obs_proportion,e_obs_proportion)
+      
+      # now, get the proportion of responses that fall between the observed quantiles when applied to the predicted data (scale by N?)
+      c_pred_proportion <- c(
+        sum(c_predicted_rt <= c_quantiles[1]),
+        sum(c_predicted_rt <= c_quantiles[2]) - sum(c_predicted_rt <= c_quantiles[1]),
+        sum(c_predicted_rt <= c_quantiles[3]) - sum(c_predicted_rt <= c_quantiles[2]),
+        sum(c_predicted_rt <= c_quantiles[4]) - sum(c_predicted_rt <= c_quantiles[3]),
+        sum(c_predicted_rt <= c_quantiles[5]) - sum(c_predicted_rt <= c_quantiles[4]),
+        sum(c_predicted_rt > c_quantiles[5])
+      ) / dim(predictions[predictions$v==c,])[1]
+      
+      e_pred_proportion <- c(
+        sum(e_predicted_rt <= e_quantiles[1]),
+        sum(e_predicted_rt <= e_quantiles[2]) - sum(e_predicted_rt <= e_quantiles[1]),
+        sum(e_predicted_rt <= e_quantiles[3]) - sum(e_predicted_rt <= e_quantiles[2]),
+        sum(e_predicted_rt <= e_quantiles[4]) - sum(e_predicted_rt <= e_quantiles[3]),
+        sum(e_predicted_rt <= e_quantiles[5]) - sum(e_predicted_rt <= e_quantiles[4]),
+        sum(e_predicted_rt > e_quantiles[5])
+      ) / dim(predictions[predictions$v==c,])[1]
+      pred_props <- c(pred_props,c_pred_proportion,e_pred_proportion)
+      
+      # Now, do the same for confidence
+      obs_props_cj <- c(sum(c_observed$cj==1),
+                        sum(c_observed$cj==2),
+                        sum(c_observed$cj==3),
+                        sum(c_observed$cj==4),
+                        sum(c_observed$cj==5),
+                        sum(c_observed$cj==6),
+                        sum(e_observed$cj==1),
+                        sum(e_observed$cj==2),
+                        sum(e_observed$cj==3),
+                        sum(e_observed$cj==4),
+                        sum(e_observed$cj==5),
+                        sum(e_observed$cj==6)
+      )/length(observations$cj[observations$snr==c])
+      
+      # to make the next step easier, lets sort the predictions for correct and errors
+      c_predicted_cj <- sort(c_predicted$cj)
+      e_predicted_cj <- sort(e_predicted$cj)
+      
+      # now, get the proportion of responses that fall between the observed quantiles when applied to the predicted data (scale by N?)
+      pred_props_cj <- c(
+        sum(c_predicted_cj == 1),
+        sum(c_predicted_cj == 2),
+        sum(c_predicted_cj == 3),
+        sum(c_predicted_cj == 4),
+        sum(c_predicted_cj == 5),
+        sum(c_predicted_cj == 6),
+        sum(e_predicted_cj == 1),
+        sum(e_predicted_cj == 2),
+        sum(e_predicted_cj == 3),
+        sum(e_predicted_cj == 4),
+        sum(e_predicted_cj == 5),
+        sum(e_predicted_cj == 6)
+      ) / dim(predictions[predictions$v==c,])[1]    
+
+      # Combine the quantiles for rts and cj
+      obs_props <- c(obs_props,obs_props_cj)
+      pred_props <- c(pred_props,pred_props_cj)
+    }
+    
+    # avoid zeros in the the data (because of division by predictions for chi square statistic) -> set to small number
+    pred_props[pred_props==0] <- .0000001
+    # avoid zeros in the the data (because of division by predictions for chi square statistic) -> set to small number
+    pred_props_cj[pred_props_cj==0] <- .0000001
+    
+    # calculate chi square
+    chiSquare = sum( ( (obs_props - pred_props) ^ 2) / pred_props )
+    
+    #Return chiSquare
+    return(chiSquare)
+  }
+}
+
+#Load data
+Data <- read.table('Squircles.txt',header=T)
+subs <- unique(Data$sub);N<-length(subs)
+
+#exclude RTs < .1 and RTs > 5
+Data <- subset(Data,rt > .1)
+Data <- subset(Data,rt < 5)
+
+#Fit the data
+metad_squircles <- rep(NA,N);dprime_squircles <- rep(NA,N);mratio_squircles <- rep(NA,N);bound_squircles <- rep(NA,N);drift_squircles <- matrix(NA,N,4);ter_squircles <- rep(NA,N);post_drift_squircles <- rep(NA,N);conf_rt_squircles <- rep(NA,N);mean_acc_squircles <- rep(NA,N);add_mean_squircles <- rep(NA,N);add_sd_squircles <- rep(NA,N);add_peak_50_squircles <- rep(NA,N)
+for(i in 1:N){
+  print(paste('Running participant',subs[i],'from',N))
+  
+  tempDat <- subset(Data,sub==subs[i]);
+  conf_rt_squircles[i] <- median(tempDat$rtcj)
+  tempDat <- tempDat[,c('rt','cor','response','cj','stim','rtcj','snr')]
+  mean_acc_squircles[i] <- mean(tempDat$cor);
+  optimal_params <- DEoptim(chi_square_optim_squircles, # function to optimize
+                              lower = c(0,0,0,0, .5, 0,   .5, 10, 1, .001, -99, 0,   0, 0), # v1,v2,v3,v4,a,ter,z,ntrials,sigma,dt,t2time,post_drift_mod,add_mean,add_sd
+                              upper = c(3,3,3,3,  4, 1.5, .5, 10, 1, .001, -99, 2.5,25, 10), # 
+                              observations = tempDat,
+                              returnFit=1,control=c(itermax=50)) 
+  results <- summary(optimal_params)
+  drift_squircles[i,1] <- results$optim$bestmem[1]
+  drift_squircles[i,2] <- results$optim$bestmem[2]
+  drift_squircles[i,3] <- results$optim$bestmem[3]
+  drift_squircles[i,4] <- results$optim$bestmem[4]
+  bound_squircles[i] <- results$optim$bestmem[5]
+  ter_squircles[i] <- results$optim$bestmem[6]
+  post_drift_squircles[i] <-   results$optim$bestmem[2]
+  add_mean_squircles[i] <- results$optim$bestmem[13]
+  add_sd_squircles[i] <- results$optim$bestmem[14]
+  
+  fit <- computeMetaDa(as.factor(tempDat$cj),as.factor(tempDat$stim),as.factor(tempDat$cor))
+  dprime_squircles[i] <- fit$Da
+  #equal variance
+  #dprime_squircles[i] <- fit$Da / (fit$SdRatio * sqrt(2/(1 + fit$SdRatio^2)))
+  metad_squircles[i] <- fit$metaDa
+  mratio_squircles[i] <- fit$metaDa/dprime_squircles[i]
+}
+
+jpeg(file="Experiment2D_results.jpg", res=600, width=400*3*(350/72), height=400*(350/72))
+par(mfrow=c(1,3))
+plot(mratio_squircles~post_drift_squircles,frame=F,pch=21,cex=2,cex.lab=1.5,col="white",bg="black",ylab="M-ratio",xlab="v-ratio");cor.test(mratio_squircles,post_drift_squircles);abline(lm(mratio_squircles~post_drift_squircles),lty=2,lwd=2)
+plot(mratio_squircles~bound_squircles,frame=F,pch=21,cex=2,cex.lab=1.5,col="white",bg="black",ylab="M-ratio",xlab="Decision bound");cor.test(mratio_squircles,bound_squircles);abline(lm(mratio_squircles~bound_squircles),lty=2,lwd=2)
+plot(post_drift_squircles~bound_squircles,frame=F,pch=21,cex=2,cex.lab=1.5,col="white",bg="black",ylab="v-ratio",xlab="Decision bound");cor.test(post_drift_squircles,bound_squircles);abline(lm(post_drift_squircles~bound_squircles),lty=2,lwd=2)
+dev.off()  
+
+#Generate model simulations
+rm(Simuls);nsim <- 10
+for(i in 1:N){
+  print(paste('simulating',i,'from',N))
+  tempDat <- subset(Data,sub==subs[i]);
+  temp <- chi_square_optim_squircles(c(drift_squircles[i,],bound_squircles[i],ter_squircles[i],.5,nsim,1,.001,-999,post_drift_squircles[i],add_mean_squircles[i],add_sd_squircles[i]),tempDat,0) 
+  
+  if(!exists('Simuls')){ Simuls <- cbind(temp,rep(i,nsim))
+  }else{ Simuls <- fastmerge(Simuls,cbind(temp,rep(i,nsim)))
+  }
+}
+Simuls <- data.frame(Simuls);names(Simuls) <- c('rt','cor','cj','v','sub')
+
+jpeg(file="Experiment2D_fit.jpg", res=600, width=600*2*(350/72), height=600*(350/72))
+par(mfrow=c(2,3),mar=c(5.1,5.1,4.1,2.1))
+for(v in 1:4){
+  tempC <- hist(Data$rt[Data$cor==1&Data$snr==v],breaks=seq(0,5,.05),xlim=c(0,3),prob=F,col=rgb(0,1,0,.25),border="white",ylab="Frequency",xlab="Reaction times (s)",cex.lab=2, cex.main=1.5, cex.axis=1.5,main=paste("drift = ",v))
+  tempE <- hist(Data$rt[Data$cor==0&Data$snr==v],breaks=seq(0,5,.05),prob=F,add=T,col=rgb(1,0,0,.25),border='white')
+  Cors <- hist(Simuls$rt[Simuls$cor==1&Simuls$v==v],breaks=seq(0,20,.05),plot=F)
+  Errs <- hist(abs(Simuls$rt[Simuls$cor==0&Simuls$v==v]),breaks=seq(0,20,.05),plot=F)
+  lines(Cors$counts/(sum(Cors$counts)/sum(tempC$counts))~Cors$mids,type='l',col='green',lwd=3)
+  lines(Errs$counts/(sum(Errs$counts)/sum(tempE$counts))~Errs$mids,type='l',col='red',lwd=3)
+  #legend("topright",fill=c("white","white","green","red"),border=F,legend=c("Simulated corrects","Simulated errors","Empirical corrects","Empirical errors"),col=rep(c("Green","Red"),2),bty='n',lwd=c(1,1,-1,-1))
+}
+#same for confidence
+#par(mfrow=c(1,1))
+Data$ones <- 1; tempCJ <- with(Data,aggregate(ones,by=list(cj=cj,sub=sub,cor=cor),sum));tempCJ <- cast(tempCJ,sub+cor~cj);for(i in 3:8) tempCJ[is.na(tempCJ[,i]),i] <- 0
+Simuls$ones <- 1; tempCJsim <- with(Simuls,aggregate(ones,by=list(cj=cj,sub=sub,cor=cor),sum));tempCJsim <- cast(tempCJsim,sub+cor~cj);for(i in 3:8) tempCJsim[is.na(tempCJsim[,i]),i] <- 0
+
+tempC <- barplot(colMeans(tempCJ[tempCJ$cor==1,3:8]),ylim=c(0,270),col=rgb(0,1,0,.25),border='white',ylab="Average frequency",xlab="Confidence",cex.lab=2, cex.main=1.5, cex.axis=1.5,main="")
+error.bar(tempC,colMeans(tempCJ[tempCJ$cor==1,3:8]),colSds(as.matrix(tempCJ[tempCJ$cor==1,3:8]))/sqrt(N),col='green',length=0)
+tempE <- barplot(colMeans(tempCJ[tempCJ$cor==0,3:8]),add=T,col=rgb(1,0,0,.25),border='white',axes=F)
+error.bar(tempC,colMeans(tempCJ[tempCJ$cor==0,3:8]),colSds(as.matrix(tempCJ[tempCJ$cor==0,3:8]))/sqrt(N),col='red',length=0)
+lines(tempC,colMeans(tempCJsim[tempCJsim$cor==1,3:8])/(dim(Simuls)[1]/dim(Data)[1]),type='p',col='green',pch=4,lwd=3)
+lines(tempC,colMeans(tempCJsim[tempCJsim$cor==0,3:8])/(dim(Simuls)[1]/dim(Data)[1]),type='p',col='red',pch=4,lwd=3)
+dev.off()
