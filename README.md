@@ -15,5 +15,6 @@ RDK_SATS contains the code that was used to run Experiment 1. Due to covid-19 th
 #Data:
 The data of Experiment 1 can be found in the file "data_exp1_categoricalconf.csv"
 The data of Experiment 1S reported in the Supplementary Materials can be found in the file "data_exp1.csv"
-The data of Experiment 2 (Drescher et al., 2018, PLoS ONE), can be found here: https://github.com/l-drescher/raw_data_MW_MC_CC
+The data of Experiment 2A (Drescher et al., 2018, PLoS ONE), can be found here: https://github.com/l-drescher/raw_data_MW_MC_CC
+The data of Experiment 2B can be found in the file "data_exp2B.csv"
 The data of Experiment 3 (Prieto et al., in preparation), can be found in the Confidence Database: https://osf.io/s46pr/
