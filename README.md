@@ -1,6 +1,10 @@
 # dynamic_influences_on_static_measures
 This repo contains code for the paper "Dynamic influences on static measures of metacognition" authored by Kobe Desender, Luc Vermeylen, and Tom Verguts.
 
+#v-ratio demo (!)
+vratio_demo.R contains a properly-documented script which simulates data under the v-ratio model, and then fits those same data again using the v-ratio model.
+Compared to the other scripts out here, this one is better commented and explained - so if you are interested in applying v-ratio to your own data; start here!
+
 #Experiment code:
 RDK_SATS contains the code that was used to run Experiment 1. Due to covid-19 this study was run online (using jspych). 
 
