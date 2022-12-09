@@ -189,8 +189,8 @@ v_range <- c(0,4)
 a_range <- c(.5,4)
 ter_range <- c(.1,1)
 v_ratio_range <- c(0,2.5)
-add_mean_range <- c(0,10) #note, these upper bounds depend a lot on the confidence scale used
-add_sd_range <- c(0,10) #note, these upper bounds depend a lot on the confidence scale used
+add_mean_range <- c(1,6) #note, these upper bounds depend a lot on the confidence scale used
+add_sd_range <- c(.1,2) #note, these upper bounds depend a lot on the confidence scale used
 
 # fit the model to the simulated data
 fit <- DEoptim(chi_square_optim, # function to optimize
