@@ -224,7 +224,7 @@ lines(Errs$counts/(sum(Errs$counts)/sum(tempE$counts))~Errs$mids,type='l',col='r
 df$cj <- factor(df$cj,levels=1:conf_levels);Simuls$cj <- factor(Simuls$cj,levels=1:conf_levels)
 df$ones <- 1; tempCJ <- with(df,aggregate(ones,by=list(cj=cj,cor=cor),sum));tempCJ <- cast(tempCJ,cor~cj);tempCJ[is.na(tempCJ)] <- 0
 Simuls$ones <- 1; tempCJsim <- with(Simuls,aggregate(ones,by=list(cj=cj,cor=cor),sum));tempCJsim <- cast(tempCJsim,cor~cj);tempCJsim[is.na(tempCJsim)] <- 0
-tempC <- barplot(as.matrix(tempCJ[tempCJ$cor==1,2:(conf_levels+1)]),ylim=c(0,max(tempCJ)),col=rgb(0,1,0,.25),border='white',ylab="Frequency",xlab="Confidence",cex.lab=2, cex.main=1.5, cex.axis=1.5,main="Be accurate")
+tempC <- barplot(as.matrix(tempCJ[tempCJ$cor==1,2:(conf_levels+1)]),ylim=c(0,max(max(tempCJ),max(tempCJsim))),col=rgb(0,1,0,.25),border='white',ylab="Frequency",xlab="Confidence",cex.lab=2, cex.main=1.5, cex.axis=1.5,main="")
 tempE <- barplot(as.matrix(tempCJ[tempCJ$cor==0,2:(conf_levels+1)]),add=T,col=rgb(1,0,0,.25),border='white',axes=F)
 lines(tempC,tempCJsim[tempCJsim$cor==1,2:(conf_levels+1)]/(dim(Simuls)[1]/dim(df)[1]),type='p',col='green',pch=4,lwd=3)
 lines(tempC,tempCJsim[tempCJsim$cor==0,2:(conf_levels+1)]/(dim(Simuls)[1]/dim(df)[1]),type='p',col='red',pch=4,lwd=3)
